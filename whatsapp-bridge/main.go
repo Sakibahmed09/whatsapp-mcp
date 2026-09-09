@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"github.com/mdp/qrterminal"
+	_ "modernc.org/sqlite"
 
 	"bytes"
 
@@ -954,7 +954,8 @@ func main() {
 			logger.Infof("Keepalive restored, connection is healthy again")
 
 		case *events.LoggedOut:
-			logger.Warnf("Device logged out, please scan QR code to log in again")
+			logger.Warnf("Device logged out, restarting into QR pairing")
+			os.Exit(1)
 		}
 	})
 
@@ -974,6 +975,9 @@ func main() {
 			firstQR = &item
 		}
 		if firstQR != nil && firstQR.Event == "code" {
+			if writeErr := os.WriteFile("/tmp/whatsapp-bridge-qr.txt", []byte(firstQR.Code), 0600); writeErr != nil {
+				logger.Warnf("Could not write live QR token: %v", writeErr)
+			}
 			fmt.Println("\nScan this QR code with your WhatsApp app:")
 			fmt.Printf("RAW_QR:%s\n", firstQR.Code)
 			qrterminal.GenerateHalfBlock(firstQR.Code, qrterminal.L, os.Stdout)
@@ -993,6 +997,9 @@ func main() {
 		}
 		for evt := range qrChan {
 			if evt.Event == "code" {
+				if writeErr := os.WriteFile("/tmp/whatsapp-bridge-qr.txt", []byte(evt.Code), 0600); writeErr != nil {
+					logger.Warnf("Could not write live QR token: %v", writeErr)
+				}
 				fmt.Println("\nScan this QR code with your WhatsApp app:")
 				fmt.Printf("RAW_QR:%s\n", evt.Code)
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
