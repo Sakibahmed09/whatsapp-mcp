@@ -276,6 +276,11 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 			mediaType = whatsmeow.MediaVideo
 			mimeType = "video/quicktime"
 
+		// Document types
+		case "pdf":
+			mediaType = whatsmeow.MediaDocument
+			mimeType = "application/pdf"
+
 		// Document types (for any other file type)
 		default:
 			mediaType = whatsmeow.MediaDocument
@@ -347,6 +352,7 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 		case whatsmeow.MediaDocument:
 			msg.DocumentMessage = &waProto.DocumentMessage{
 				Title:         proto.String(mediaPath[strings.LastIndex(mediaPath, "/")+1:]),
+				FileName:      proto.String(mediaPath[strings.LastIndex(mediaPath, "/")+1:]),
 				Caption:       proto.String(message),
 				Mimetype:      proto.String(mimeType),
 				URL:           &resp.URL,
@@ -821,8 +827,12 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		})
 	})
 
-	// Start the server
-	serverAddr := fmt.Sprintf(":%d", port)
+	// No auth on this API, so loopback only unless BIND_ADDR opts in.
+	bindAddr := os.Getenv("BIND_ADDR")
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1"
+	}
+	serverAddr := fmt.Sprintf("%s:%d", bindAddr, port)
 	fmt.Printf("Starting REST API server on %s...\n", serverAddr)
 
 	// Run server in a goroutine so it doesn't block
@@ -955,6 +965,15 @@ func main() {
 
 		case *events.LoggedOut:
 			logger.Warnf("Device logged out, restarting into QR pairing")
+			// let whatsmeow finish deleting the dead session, or every restart skips pairing
+			for i := 0; i < 20 && client.Store.ID != nil; i++ {
+				time.Sleep(500 * time.Millisecond)
+			}
+			if client.Store.ID != nil {
+				if err := client.Store.Delete(context.Background()); err != nil {
+					logger.Errorf("Failed to clear logged-out session: %v", err)
+				}
+			}
 			os.Exit(1)
 		}
 	})
