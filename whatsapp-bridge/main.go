@@ -197,13 +197,24 @@ type SendMessageResponse struct {
 
 // SendMessageRequest represents the request body for the send message API
 type SendMessageRequest struct {
-	Recipient string `json:"recipient"`
-	Message   string `json:"message"`
-	MediaPath string `json:"media_path,omitempty"`
+	Recipient    string   `json:"recipient"`
+	Message      string   `json:"message"`
+	MediaPath    string   `json:"media_path,omitempty"`
+	QuotedID     string   `json:"quoted_id,omitempty"`
+	QuotedMsg    string   `json:"quoted_msg,omitempty"`
+	QuotedSender string   `json:"quoted_sender,omitempty"`
+	Mentions     []string `json:"mentions,omitempty"`
+}
+
+func toJID(s string) string {
+	if strings.Contains(s, "@") {
+		return s
+	}
+	return s + "@s.whatsapp.net"
 }
 
 // Function to send a WhatsApp message
-func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message string, mediaPath string) (bool, string) {
+func sendWhatsAppMessage(client *whatsmeow.Client, messageStore *MessageStore, recipient string, message string, mediaPath string, quotedID string, quotedMsg string, quotedSender string, mentions []string) (bool, string) {
 	if !client.IsConnected() {
 		return false, "Not connected to WhatsApp"
 	}
@@ -363,18 +374,79 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 				FileLength:    &resp.FileLength,
 			}
 		}
+	} else if len(mentions) > 0 || quotedID != "" {
+		contextInfo := &waProto.ContextInfo{}
+		for _, m := range mentions {
+			contextInfo.MentionedJID = append(contextInfo.MentionedJID, toJID(m))
+		}
+		if quotedID != "" {
+			contextInfo.StanzaID = proto.String(quotedID)
+			if quotedSender != "" {
+				contextInfo.Participant = proto.String(toJID(quotedSender))
+			}
+			contextInfo.QuotedMessage = &waProto.Message{Conversation: proto.String(quotedMsg)}
+		}
+		msg.ExtendedTextMessage = &waProto.ExtendedTextMessage{
+			Text:        proto.String(message),
+			ContextInfo: contextInfo,
+		}
 	} else {
 		msg.Conversation = proto.String(message)
 	}
 
 	// Send message
-	_, err = client.SendMessage(context.Background(), recipientJID, msg)
+	resp, err := client.SendMessage(context.Background(), recipientJID, msg)
 
 	if err != nil {
 		return false, fmt.Sprintf("Error sending message: %v", err)
 	}
 
+	// whatsmeow never echoes API sends back, so without this row they vanish
+	// from the store and every reader thinks the message was never sent.
+	if messageStore != nil {
+		recordSent(client, messageStore, recipientJID.String(), resp, message, mediaPath)
+	}
+
 	return true, fmt.Sprintf("Message sent to %s", recipient)
+}
+
+// Best effort: a failed write must never report a delivered message as failed.
+func recordSent(client *whatsmeow.Client, messageStore *MessageStore, chatJID string, resp whatsmeow.SendResponse, message string, mediaPath string) {
+	ts := resp.Timestamp
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	var name string
+	messageStore.db.QueryRow("SELECT name FROM chats WHERE jid = ?", chatJID).Scan(&name)
+	if err := messageStore.StoreChat(chatJID, name, ts); err != nil {
+		fmt.Printf("Warning: could not update chat on send: %v\n", err)
+	}
+	sender := ""
+	if client.Store.ID != nil {
+		sender = client.Store.ID.User
+	}
+	mediaType, filename := "", ""
+	if mediaPath != "" {
+		filename = filepath.Base(mediaPath)
+		mediaType = sentMediaKind(mediaPath)
+	}
+	if err := messageStore.StoreMessage(string(resp.ID), chatJID, sender, message, ts, true,
+		mediaType, filename, "", nil, nil, nil, 0); err != nil {
+		fmt.Printf("Warning: could not record sent message: %v\n", err)
+	}
+}
+
+func sentMediaKind(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return "image"
+	case ".mp4", ".mov", ".avi", ".mkv":
+		return "video"
+	case ".ogg", ".opus", ".m4a", ".mp3", ".wav":
+		return "audio"
+	default:
+		return "document"
+	}
 }
 
 // Extract media info from a message
@@ -711,7 +783,8 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		fmt.Println("Received request to send message", req.Message, req.MediaPath)
 
 		// Send the message
-		success, message := sendWhatsAppMessage(client, req.Recipient, req.Message, req.MediaPath)
+		success, message := sendWhatsAppMessage(client, messageStore, req.Recipient, req.Message, req.MediaPath,
+			req.QuotedID, req.QuotedMsg, req.QuotedSender, req.Mentions)
 		fmt.Println("Message sent", success, message)
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")

@@ -146,7 +146,11 @@ def send_message(
     recipient: str,
     message: Optional[str] = None,
     media_path: Optional[str] = None,
-    as_audio: bool = False
+    as_audio: bool = False,
+    quoted_id: Optional[str] = None,
+    quoted_msg: Optional[str] = None,
+    quoted_sender: Optional[str] = None,
+    mentions: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """Send a WhatsApp message, file, or audio to a person or group.
 
@@ -158,6 +162,10 @@ def send_message(
         message: Optional text message to send
         media_path: Optional absolute path to a media file to send (image, video, document, audio)
         as_audio: If True and media_path is provided, send as a voice message (converts to Opus .ogg if needed). If it errors due to ffmpeg not being installed, set as_audio to False.
+        quoted_id: Optional ID of the message to reply to (from list_messages). Text messages only.
+        quoted_msg: Text of the message being replied to, shown inside the quote bubble.
+        quoted_sender: Sender of the quoted message as a JID. In groups that use LIDs pass "<lid>@lid".
+        mentions: Optional JIDs or phone numbers to @tag. The message text must contain "@<user part>" for each one, e.g. "@123456789".
 
     Returns:
         A dictionary containing success status and a status message
@@ -168,7 +176,8 @@ def send_message(
             "message": "Recipient must be provided"
         }
 
-    success, status_message = whatsapp_send_message(recipient, message, media_path, as_audio)
+    success, status_message = whatsapp_send_message(recipient, message, media_path, as_audio,
+                                                    quoted_id, quoted_msg, quoted_sender, mentions)
     return {
         "success": success,
         "message": status_message

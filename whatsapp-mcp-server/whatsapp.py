@@ -733,7 +733,9 @@ def get_chat(
         if 'conn' in locals():
             conn.close()
 
-def send_message(recipient: str, message: Optional[str] = None, media_path: Optional[str] = None, as_audio: bool = False) -> Tuple[bool, str]:
+def send_message(recipient: str, message: Optional[str] = None, media_path: Optional[str] = None, as_audio: bool = False,
+                 quoted_id: Optional[str] = None, quoted_msg: Optional[str] = None, quoted_sender: Optional[str] = None,
+                 mentions: Optional[List[str]] = None) -> Tuple[bool, str]:
     try:
         if not recipient:
             return False, "Recipient must be provided"
@@ -757,6 +759,13 @@ def send_message(recipient: str, message: Optional[str] = None, media_path: Opti
             payload["message"] = message
         if media_path:
             payload["media_path"] = media_path
+        if quoted_id:
+            payload["quoted_id"] = quoted_id
+            payload["quoted_msg"] = quoted_msg or ""
+        if quoted_sender:
+            payload["quoted_sender"] = quoted_sender
+        if mentions:
+            payload["mentions"] = mentions
 
         response = requests.post(url, json=payload)
 
